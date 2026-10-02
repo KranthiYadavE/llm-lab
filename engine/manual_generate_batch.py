@@ -36,27 +36,24 @@ attention_mask = enc.attention_mask.cuda()
 @torch.no_grad()
 def manual_generate_batch(input_ids, attention_mask, n_new_tokens):
     batch_size, seq_len = input_ids.shape
-    generated = input_ids
     finished = torch.zeros(batch_size, dtype= torch.bool, device="cuda")
-
     active_index = list(range(batch_size))
+
+    token_history = {idx: input_ids[row].tolist() for row, idx in enumerate(active_index)}
     result={}
-    out = model(input_ids=generated, attention_mask=attention_mask, use_cache=True)
+    
+    out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=True)
     past_key_values = out.past_key_values
 
     next_token = torch.argmax(out.logits[:,-1,:], dim=-1, keepdim=True)
     next_token = torch.where(finished.unsqueeze(-1), torch.full_like(next_token, eos_id),next_token)
     finished = finished | (next_token.squeeze(-1)==eos_id)
-    generated = torch.cat([generated, next_token],dim=-1)
+    
 
     attention_mask = torch.cat(
        [attention_mask, torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device="cuda")], dim=-1,
 )
-    print(type(past_key_values.layers))
-    print(len(past_key_values.layers))
-    layer0 = past_key_values.layers[0]
-    print(type(layer0))
-    print([m for m in dir(layer0) if not m.startswith("_")])
+    
     for _ in range(n_new_tokens-1):
         if len(active_index) == 0:
             break
@@ -64,10 +61,10 @@ def manual_generate_batch(input_ids, attention_mask, n_new_tokens):
         if finished.any():
             keep = ~finished
             for row in finished.nonzero(as_tuple=True)[0].tolist():
-                result[active_index[row]] = generated[row].clone()
+                result[active_index[row]] = token_history[active_index[row]]
 
             next_token = next_token[keep]
-            generated = generated[keep]
+         
             attention_mask = attention_mask[keep]
             past_key_values = slice_past_key_values(past_key_values, keep)
             active_index = [idx for idx, k in zip(active_index, keep.tolist()) if k]
@@ -80,15 +77,17 @@ def manual_generate_batch(input_ids, attention_mask, n_new_tokens):
         next_token = next_token_logits.argmax(dim=-1, keepdim=True)
         next_token = torch.where(finished.unsqueeze(-1), torch.full_like(next_token, eos_id),next_token)
         finished = finished | (next_token.squeeze(-1)==eos_id)
-        generated = torch.cat([generated, next_token], dim=-1)
+
+        for row, idx in enumerate(active_index):
+            token_history[idx].append(next_token[row].item())
 
         attention_mask = torch.cat(
             [attention_mask, torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device="cuda")],
             dim=-1,
         )
     
-    for row, idx in enumerate(active_index):
-        result[idx] = generated[row].clone()
+    for idx in active_index:
+        result[idx] = token_history[idx]
     return result
 
 manual_result = manual_generate_batch(input_ids, attention_mask, n_new_tokens=30)
@@ -99,4 +98,3 @@ for i in range(len(prompts)):
 hf_out = model.generate(input_ids, attention_mask=attention_mask, max_new_tokens=30, min_new_tokens=30, do_sample=False)
 print("hf_out:", tokenizer.decode(hf_out[0], skip_special_tokens=True))
 
-print("MATCH:", torch.equal(manual_result[0], hf_out[0]))

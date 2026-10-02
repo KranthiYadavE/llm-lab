@@ -17,9 +17,9 @@ prompts = [
 
 tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "left"
-# test_token_id = tokenizer.encode(" the", add_special_tokens=False)[0]
-# eos_id = test_token_id
-eos_id = tokenizer.eos_token_id
+test_token_id = tokenizer.encode(" the", add_special_tokens=False)[0]
+eos_id = test_token_id
+#eos_id = tokenizer.eos_token_id
 
 from transformers.cache_utils import DynamicCache
 
@@ -41,6 +41,7 @@ def manual_generate_batch(input_ids, attention_mask, n_new_tokens):
 
     token_history = {idx: input_ids[row].tolist() for row, idx in enumerate(active_index)}
     result={}
+    batch_size_log = []
     
     out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=True)
     past_key_values = out.past_key_values
@@ -57,6 +58,7 @@ def manual_generate_batch(input_ids, attention_mask, n_new_tokens):
     for _ in range(n_new_tokens-1):
         if len(active_index) == 0:
             break
+        batch_size_log.append(len(active_index))
         
         if finished.any():
             keep = ~finished
@@ -88,6 +90,19 @@ def manual_generate_batch(input_ids, attention_mask, n_new_tokens):
     
     for idx in active_index:
         result[idx] = token_history[idx]
+
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(range(len(batch_size_log)), batch_size_log, marker="o", linewidth=2)
+    plt.xlabel("Decode step")
+    plt.ylabel("Active batch size")
+    plt.title("Batch size shrinks as sequences finish")
+    plt.yticks(range(0, max(batch_size_log) + 1))
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig("batch_shrink.png", dpi=150)
+    print("saved batch_shrink.png")
     return result
 
 manual_result = manual_generate_batch(input_ids, attention_mask, n_new_tokens=30)
